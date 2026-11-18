@@ -1,19 +1,19 @@
 {
-	"actorSpecification": 1,
-	"name": "energy-market-scraper-gr",
-	"title": "Hellenic & Balkan Energy Market Tracker - Imbalance & RES Curtailment",
-	"description": "Unifies Greek and Southeastern European energy market data from ADMIE (IPTO), HEnEx and ENTSO-E into one clean hourly JSON dataset: load, RES generation vs forecast, curtailment volumes, day-ahead clearing prices, system marginal price and cross-border flows, with grid-stress indicators and optional webhook alerts.",
-	"version": "1.0",
-	"buildTag": "latest",
-	"meta": {
-		"templateId": "python-start",
-		"generatedBy": "mistral-large-4-0"
-	},
-	"input": "./input_schema.json",
-	"output": "./output_schema.json",
-	"storages": {
-		"dataset": "./dataset_schema.json",
-		"keyValueStore": "./key_value_store_schema.json"
-	},
-	"dockerfile": "../Dockerfile"
+    "actorSpecification": 1,
+    "name": "gr-see-energy-grid-tracker",
+    "title": "Hellenic & Balkan Energy Market Tracker",
+    "description": "Unifies Greek/SEE energy data from ADMIE (IPTO), HEnEx and ENTSO-E into one hourly JSON dataset: load, RES forecast vs actual, curtailment MW, clearing prices, SMP, cross-border flows, grid-stress indicator and webhook alerts.",
+    "version": "1.0",
+    "buildTag": "latest",
+    "meta": {
+        "templateId": "python-start",
+        "generatedBy": "mistral-large-4-0"
+    },
+    "input": "./input_schema.json",
+    "output": "./output_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json",
+        "keyValueStore": "./key_value_store_schema.json"
+    },
+    "dockerfile": "../Dockerfile"
 }
