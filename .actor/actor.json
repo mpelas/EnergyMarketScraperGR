@@ -3,7 +3,7 @@
     "name": "gr-see-energy-grid-tracker",
     "title": "Hellenic & Balkan Energy Market Tracker",
     "description": "Unifies Greek/SEE energy data from ADMIE (IPTO), HEnEx and ENTSO-E into one hourly JSON dataset: load, RES forecast vs actual, curtailment MW, clearing prices, SMP, cross-border flows, grid-stress indicator and webhook alerts.",
-    "version": "1.0",
+    "version": "1.1",
     "buildTag": "latest",
     "meta": {
         "templateId": "python-start",

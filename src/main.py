@@ -18,9 +18,9 @@ from .normalize import (
     compute_grid_stress,
     finalize,
     hour_timestamp,
-    ingest_admie_payload,
+    ingest_admie_wide,
     ingest_entsoe_flow,
-    ingest_henex_row,
+    henex_hourly_aggregate,
     new_record,
     resolve_date,
 )
@@ -79,10 +79,11 @@ async def main() -> None:
                 try:
                     files = await sources.fetch_admie_files(date_from, date_to, categories)
                     Actor.log.info(f"ADMIE: downloaded {len(files)} file(s)")
+                    admie_records: Dict[str, Dict[str, Any]] = {}
                     for f in files:
-                        rec = new_record(f"{date_from.isoformat()}T00:00:00Z")
-                        ingest_admie_payload(rec, f["payload"], f["category"], f["sourceUrl"])
-                        raw_records.append(rec)
+                        n = ingest_admie_wide(f["rows"], f["category"], f["sourceUrl"], admie_records)
+                        Actor.log.info(f"ADMIE {f['category']}: {n} hour-cells from {f['sourceUrl'].rsplit('/', 1)[-1]}")
+                    raw_records.extend(admie_records.values())
                 except Exception as e:
                     errors.append(f"ADMIE: {e}")
                     Actor.log.warning(f"ADMIE fetch failed: {e}")
@@ -96,10 +97,7 @@ async def main() -> None:
                         if not packages:
                             errors.append(f"HEnEx: no results package found for {day}")
                         for pkg in packages:
-                            for row in pkg["rows"]:
-                                rec = new_record(hour_timestamp(pkg["day"], 1))
-                                ingest_henex_row(rec, row, pkg["day"], pkg["sourceUrl"])
-                                raw_records.append(rec)
+                            raw_records.extend(henex_hourly_aggregate(pkg["rows"], pkg["day"], pkg["sourceUrl"]))
                     except Exception as e:
                         errors.append(f"HEnEx {day}: {e}")
                         Actor.log.warning(f"HEnEx fetch failed for {day}: {e}")

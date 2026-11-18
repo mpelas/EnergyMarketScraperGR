@@ -31,10 +31,14 @@
             "description": "ADMIE FileCategory codes to request, e.g. RealTimeSCADASystemLoad, ISPDayAheadLoadForecast, ISPWeekAheadLoadForecast, DayAheadSystemMarginalPrice.",
             "default": [
                 "RealTimeSCADASystemLoad",
-                "ISPDayAheadLoadForecast",
-                "ISPWeekAheadLoadForecast",
-                "DayAheadSystemMarginalPrice",
-                "DayAheadRESForecast"
+                "RealTimeSCADARES",
+                "RealTimeSCADAImportsExports",
+                "DayAheadLoadForecast",
+                "DayAheadRESForecast",
+                "ISP1DayAheadLoadForecast",
+                "ISP1DayAheadRESForecast",
+                "ExPostImbalancePricingResults",
+                "SystemRealizationSCADA"
             ],
             "items": {
                 "type": "string"

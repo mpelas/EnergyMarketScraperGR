@@ -8,9 +8,9 @@ from src.normalize import (  # noqa: E402
     compute_grid_stress,
     finalize,
     hour_timestamp,
-    ingest_admie_payload,
+    ingest_admie_wide,
     ingest_entsoe_flow,
-    ingest_henex_row,
+    henex_hourly_aggregate,
     merge_hourly_records,
     new_record,
     resolve_date,
@@ -24,31 +24,51 @@ class TestNormalize(unittest.TestCase):
         self.assertEqual(hour_timestamp("2026-11-18", 1), "2026-11-18T00:00:00Z")
         self.assertEqual(hour_timestamp("2026-11-18", 24), "2026-11-18T23:00:00Z")
 
-    def test_henex_row_ingestion(self):
-        rec = new_record(hour_timestamp("2026-11-17", 1))
-        ingest_henex_row(
-            rec,
-            {"Hour": 5, "MCP (EUR/MWh)": "42.5", "Total System Load (MW)": 6720.0},
-            "2026-11-17",
-            "https://www.enexgroup.gr/x.xlsx",
-        )
-        self.assertEqual(rec["timestamp"], "2026-11-17T04:00:00Z")
-        self.assertEqual(rec["pricing"]["henexMCP_EUR_MWh"], 42.5)
-        self.assertEqual(rec["load"]["actualMW"], 6720.0)
-        self.assertIn("HEnEx", rec["sources"])
+    def test_henex_hourly_aggregate(self):
+        # 15-minute MTU rows like the real EL-DAM_Results sheet
+        rows = [
+            {"DELIVERY_MTU": "2026-11-17 13:00:00", "MCP": 40.0, "TOTAL_TRADES": 100.0},
+            {"DELIVERY_MTU": "2026-11-17 13:15:00", "MCP": 44.0, "TOTAL_TRADES": 120.0},
+            {"DELIVERY_MTU": "2026-11-17 14:00:00", "MCP": 50.0, "TOTAL_TRADES": 90.0},
+        ]
+        recs = henex_hourly_aggregate(rows, "2026-11-17", "https://www.enexgroup.gr/x.xlsx")
+        self.assertEqual(len(recs), 2)
+        self.assertEqual(recs[0]["timestamp"], "2026-11-17T13:00:00Z")
+        self.assertAlmostEqual(recs[0]["pricing"]["henexMCP_EUR_MWh"], 42.0)
+        self.assertAlmostEqual(recs[0]["henexVolumeMWh"], 220.0)
+        self.assertIn("HEnEx", recs[0]["sources"])
 
-    def test_admie_payload_ingestion(self):
-        rec = new_record("2026-11-17T00:00:00Z")
-        ingest_admie_payload(
-            rec,
-            {"SystemLoad": 6100.0, "CurtailmentMW": 450.0, "SMP": 55.2, "WindActual": 900.0},
-            "RealTimeSCADASystemLoad",
-            "https://www.admie.gr/f.json",
-        )
-        self.assertEqual(rec["load"]["actualMW"], 6100.0)
-        self.assertEqual(rec["renewables"]["estimatedCurtailmentMW"], 450.0)
-        self.assertEqual(rec["pricing"]["systemMarginalPrice_EUR_MWh"], 55.2)
+    def test_admie_wide_ingestion(self):
+        # ADMIE wide .xls layout: label row, 'Date' header row with hours 1..24, data rows
+        rows = [
+            [None, "NET LOAD WITHOUT CRETE (MWh)"] + [None] * 23,
+            ["Date"] + list(range(1, 25)),
+            ["17-11-2026", 4196, 3887] + [None] * 22,
+        ]
+        records = {}
+        n = ingest_admie_wide(rows, "RealTimeSCADASystemLoad", "https://www.admie.gr/f.xls", records)
+        self.assertEqual(n, 2)
+        rec = records["2026-11-17T00:00:00Z"]
+        self.assertEqual(rec["load"]["actualMW"], 4196.0)
+        self.assertEqual(records["2026-11-17T01:00:00Z"]["load"]["actualMW"], 3887.0)
         self.assertIn("ADMIE", rec["sources"])
+
+    def test_admie_wide_imports_exports(self):
+        # stacked per-border blocks: label row, 'Date' row, one data row
+        rows = [
+            [None, "ALBANIA REALTIME NET (MWh)"] + [None] * 23,
+            ["Date"] + list(range(1, 25)),
+            ["17-11-2026", -180] + [None] * 23,
+            [None, "BULGARIA REALTIME NET (MWh)"] + [None] * 23,
+            ["Date"] + list(range(1, 25)),
+            ["17-11-2026", 456] + [None] * 23,
+        ]
+        records = {}
+        n = ingest_admie_wide(rows, "RealTimeSCADAImportsExports", "https://www.admie.gr/g.xls", records)
+        self.assertEqual(n, 2)
+        rec = records["2026-11-17T00:00:00Z"]
+        self.assertEqual(rec["crossBorderFlowsMW"]["AL_GR"], -180.0)
+        self.assertEqual(rec["crossBorderFlowsMW"]["BG_GR"], 456.0)
 
     def test_entsoe_flow(self):
         rec = new_record("2026-11-17T10:00:00Z")
@@ -58,9 +78,11 @@ class TestNormalize(unittest.TestCase):
 
     def test_merge_same_hour(self):
         a = new_record("2026-11-17T10:00:00Z")
-        ingest_admie_payload(a, {"SystemLoad": 6000.0}, "cat", "u1")
+        a["load"]["actualMW"] = 6000.0
+        a["sources"].append("ADMIE")
         b = new_record("2026-11-17T10:00:00Z")
-        ingest_henex_row(b, {"Hour": 11, "MCP (EUR/MWh)": 30.0}, "2026-11-17", "u2")
+        b["pricing"]["henexMCP_EUR_MWh"] = 30.0
+        b["sources"].append("HEnEx")
         merged = merge_hourly_records([a, b])
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["load"]["actualMW"], 6000.0)

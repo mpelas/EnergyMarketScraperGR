@@ -16,8 +16,17 @@ GRID_STRESS_LOW = "LOW"
 # Thresholds used by the default grid-stress indicator
 DEFAULT_HIGH_CURTAILMENT_MW = 300.0
 DEFAULT_MODERATE_CURTAILMENT_MW = 50.0
-DEFAULT_NEGATIVE_PRICE = 0.0
 DEFAULT_LOW_PRICE_EUR = 20.0
+
+# ADMIE ImportsExports column label -> our border key
+BORDER_LABELS = {
+    "ALBANIA": "AL_GR",
+    "BULGARIA": "BG_GR",
+    "ITALY": "IT_GR",
+    "MACEDONIA": "MK_GR",
+    "FYROM": "MK_GR",
+    "TURKEY": "TR_GR",
+}
 
 
 def utc_now_iso() -> str:
@@ -41,7 +50,7 @@ def resolve_date(value: Any, fallback: date) -> date:
 
 
 def hour_timestamp(day: str, hour: int) -> str:
-    """Build an ISO-8601 UTC hour-start timestamp. hour is 1..24 (market convention)."""
+    """ISO-8601 UTC hour-start timestamp. hour is 1..24 (market convention)."""
     h = (hour - 1) % 24
     return f"{day}T{h:02d}:00:00Z"
 
@@ -57,6 +66,8 @@ def new_record(timestamp: str, market_area: str = "GR", resolution: str = "1H") 
             "solarActualMW": None,
             "windForecastMW": None,
             "windActualMW": None,
+            "resTotalForecastMW": None,
+            "resTotalActualMW": None,
             "estimatedCurtailmentMW": None,
         },
         "pricing": {"henexMCP_EUR_MWh": None, "systemMarginalPrice_EUR_MWh": None},
@@ -68,7 +79,6 @@ def new_record(timestamp: str, market_area: str = "GR", resolution: str = "1H") 
 
 
 def _set_once(target: Dict[str, Any], key: str, value: Any) -> None:
-    """Set a value only if it is not None and the target is still empty."""
     if value is None:
         return
     if target.get(key) is None:
@@ -84,111 +94,170 @@ def _as_float(value: Any) -> Optional[float]:
         return None
 
 
-def ingest_admie_payload(record: Dict[str, Any], payload: Any, category: str, source_url: str) -> None:
-    """Best-effort extraction of grid metrics from an ADMIE file payload.
-
-    ADMIE files are JSON/CSV/XML with varying schemas per FileCategory, so we
-    scan dicts/lists for known key names instead of hard-coding one layout.
-    """
-    keys = _flatten_keys(payload)
-    load, ren, pricing, grid = record["load"], record["renewables"], record["pricing"], None
-
-    def find(*names: str) -> Optional[float]:
-        lowered = {k.lower(): k for k in keys}
-        for n in names:
-            k = lowered.get(n.lower())
-            if k is not None:
-                v = _as_float(keys[k])
-                if v is not None:
-                    return v
+def _parse_day(value: Any) -> Optional[str]:
+    """Parse '17-11-2026', '2026-11-17' or a datetime into YYYY-MM-DD."""
+    if value is None:
         return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    s = str(value).strip()
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
-    _set_once(load, "actualMW", find("systemload", "actualload", "loadmw", "totalload"))
-    _set_once(load, "forecastMW", find("forecastload", "loadforecast", "forecast"))
-    _set_once(ren, "solarActualMW", find("solaractual", "solargeneration", "solar"))
-    _set_once(ren, "solarForecastMW", find("solarforecast", "solarfc"))
-    _set_once(ren, "windActualMW", find("windactual", "windgeneration", "wind"))
-    _set_once(ren, "windForecastMW", find("windforecast", "windfc"))
-    _set_once(pricing, "systemMarginalPrice_EUR_MWh", find("smp", "systemmarginalprice", "marginalprice"))
-    curt = find("curtailmentmw", "curtailment", "downwardcurtailment")
-    if curt is not None:
-        _set_once(ren, "estimatedCurtailmentMW", curt)
 
-    # timestamp if the payload carries one
-    ts = None
-    for k in keys:
-        if k.lower() in ("timestamp", "datetime", "date_time", "date"):
-            ts = _parse_ts(keys[k])
-            if ts:
+def ingest_admie_wide(
+    rows: List[List[Any]],
+    category: str,
+    source_url: str,
+    records: Dict[str, Dict[str, Any]],
+) -> int:
+    """Parse an ADMIE wide .xls matrix (hour columns 1..24, one row per day)
+    into unified hourly records. Returns the number of hour-cells ingested."""
+    if not rows or len(rows) < 2:
+        return 0
+    # ADMIE files contain one or more stacked blocks: a label row, a 'Date'
+    # header row with hour numbers 1..24 to its right, then one data row per day.
+    cat = category.upper()
+    count = 0
+    i = 0
+    while i < len(rows):
+        row = rows[i]
+        if not row or str(row[0]).strip().lower() != "date":
+            i += 1
+            continue
+        hours = [_as_float(v) for v in row[1:25]]
+        label_row = rows[i - 1] if i > 0 else []
+        labels = [str(v).upper() if v is not None else "" for v in label_row[1:25]]
+        # a block usually carries one label for all of its hour columns
+        block_label = next((l for l in labels if l), "")
+        # data rows follow until the next block header or the end
+        j = i + 1
+        while j < len(rows):
+            drow = rows[j]
+            if drow and str(drow[0]).strip().lower() == "date":
                 break
-    if ts:
-        record["timestamp"] = ts
-    if "ADMIE" not in record["sources"]:
-        record["sources"].append("ADMIE")
-    record.setdefault("sourceUrls", {})
-    record["sourceUrls"][category] = source_url
+            day = _parse_day(drow[0]) if drow else None
+            if day:
+                for idx, h in enumerate(hours):
+                    if h is None:
+                        continue
+                    col = idx + 1
+                    value = _as_float(drow[col]) if col < len(drow) else None
+                    if value is None:
+                        continue
+                    ts = hour_timestamp(day, int(h))
+                    rec = records.setdefault(ts, new_record(ts))
+                    label = labels[idx] if idx < len(labels) and labels[idx] else block_label
+                    _apply_admie_value(rec, cat, label, value)
+                    if "ADMIE" not in rec["sources"]:
+                        rec["sources"].append("ADMIE")
+                    rec.setdefault("sourceUrls", {})[category] = source_url
+                    count += 1
+            j += 1
+        i = j
+    return count
 
 
-def ingest_henex_row(record: Dict[str, Any], row: Dict[str, Any], day: str, source_url: str) -> None:
-    """Map one row of the HEnEx DAM results sheet onto the unified record."""
-    lowered = {str(k).strip().lower(): v for k, v in row.items()}
+def _apply_admie_value(rec: Dict[str, Any], cat: str, label: str, value: float) -> None:
+    load, ren, pricing = rec["load"], rec["renewables"], rec["pricing"]
+    if "IMPORTSEXPORT" in cat or "INTERCONNECTION" in cat:
+        for key, border in BORDER_LABELS.items():
+            if key in label:
+                rec["crossBorderFlowsMW"].setdefault(border, value)
+                return
+        return
+    if "SYSTEMLOAD" in cat and "FORECAST" not in cat:
+        _set_once(load, "actualMW", value)
+    elif "LOADFORECAST" in cat:
+        _set_once(load, "forecastMW", value)
+    elif "SCADARES" in cat or ("RES" in cat and "FORECAST" not in cat and "REALTIME" in cat):
+        _set_once(ren, "resTotalActualMW", value)
+    elif "RESFORECAST" in cat:
+        _set_once(ren, "resTotalForecastMW", value)
+    elif "CURTAIL" in cat:
+        _set_once(ren, "estimatedCurtailmentMW", value)
+    elif "IMBALANCE" in cat or "SMP" in cat or "MARGINAL" in cat:
+        _set_once(pricing, "systemMarginalPrice_EUR_MWh", value)
 
-    def find(*names: str) -> Any:
-        for n in names:
-            if n in lowered:
-                return lowered[n]
+
+def _parse_any_ts(value: Any) -> Optional[str]:
+    """Parse a datetime-ish value (datetime, 'YYYY-MM-DD HH:MM:SS', ISO) to hour-start UTC ISO."""
+    if value is None:
         return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        s = str(value).strip().replace("Z", "+00:00")
+        dt = None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc)
+    return f"{dt.date().isoformat()}T{dt.hour:02d}:00:00Z"
 
-    hour = _as_float(find("hour", "period", "timeblock", "block"))
-    if hour is not None:
-        record["timestamp"] = hour_timestamp(day, int(hour))
-    _set_once(record["load"], "actualMW", _as_float(find("total system load (mw)", "system load (mw)", "load (mw)", "totalload")))
-    mcp = _as_float(find("mcp (eur/mwh)", "mcp (€/mwh)", "mcp", "market clearing price", "price (eur/mwh)", "clearing price (eur/mwh)"))
-    _set_once(record["pricing"], "henexMCP_EUR_MWh", mcp)
-    volume = _as_float(find("volume (mwh)", "total volume (mwh)", "volume"))
-    if volume is not None and record.get("henexVolumeMWh") is None:
-        record["henexVolumeMWh"] = volume
-    if "HEnEx" not in record["sources"]:
-        record["sources"].append("HEnEx")
-    record.setdefault("sourceUrls", {})
-    record["sourceUrls"]["HEnEx_DAM_Results"] = source_url
+
+def henex_hourly_aggregate(rows: List[Dict[str, Any]], day: str, source_url: str) -> List[Dict[str, Any]]:
+    """Aggregate HEnEx DAM result rows (15-minute MTUs) into hourly records.
+
+    Sheet columns: DELIVERY_MTU, MCP, TOTAL_TRADES, ... We average MCP and sum
+    traded volume per delivery hour.
+    """
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        lowered = {str(k).strip().lower(): v for k, v in row.items()}
+
+        def find(*names: str) -> Any:
+            for n in names:
+                if n in lowered:
+                    return lowered[n]
+            return None
+
+        ts = _parse_any_ts(find("delivery_mtu", "delivery start", "datetime", "timestamp"))
+        if ts is None:
+            hour = _as_float(find("hour", "period", "sort", "block"))
+            ts = hour_timestamp(day, int(hour)) if hour is not None else hour_timestamp(day, 1)
+        b = buckets.setdefault(ts, {"mcp": [], "volume": [], "load": []})
+        mcp = _as_float(find("mcp", "mcp (eur/mwh)", "mcp (€/mwh)", "price (eur/mwh)"))
+        if mcp is not None:
+            b["mcp"].append(mcp)
+        vol = _as_float(find("total_trades", "volume (mwh)", "total volume (mwh)", "volume"))
+        if vol is not None:
+            b["volume"].append(vol)
+        load = _as_float(find("total system load (mw)", "system load (mw)", "load (mw)", "totalload"))
+        if load is not None:
+            b["load"].append(load)
+
+    out: List[Dict[str, Any]] = []
+    for ts in sorted(buckets):
+        b = buckets[ts]
+        rec = new_record(ts)
+        if b["mcp"]:
+            rec["pricing"]["henexMCP_EUR_MWh"] = sum(b["mcp"]) / len(b["mcp"])
+        if b["volume"]:
+            rec["henexVolumeMWh"] = sum(b["volume"])
+        if b["load"]:
+            rec["load"]["actualMW"] = sum(b["load"]) / len(b["load"])
+        rec["sources"].append("HEnEx")
+        rec["sourceUrls"] = {"HEnEx_DAM_Results": source_url}
+        out.append(rec)
+    return out
 
 
 def ingest_entsoe_flow(record: Dict[str, Any], border: str, mw: float) -> None:
     record["crossBorderFlowsMW"][border] = mw
     if "ENTSO-E" not in record["sources"]:
         record["sources"].append("ENTSO-E")
-
-
-def _flatten_keys(obj: Any, out: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Flatten nested dict/list structures into {key: value} for key scanning."""
-    if out is None:
-        out = {}
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if isinstance(v, (dict, list)):
-                _flatten_keys(v, out)
-            else:
-                out[str(k)] = v
-    elif isinstance(obj, list):
-        for item in obj:
-            _flatten_keys(item, out)
-    return out
-
-
-def _parse_ts(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    s = str(value).strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            dt = datetime.strptime(s.replace("Z", "+00:00"), fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-        except ValueError:
-            continue
-    return None
 
 
 def merge_hourly_records(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -223,12 +292,8 @@ def compute_grid_stress(
     moderate_curtailment_mw: float = DEFAULT_MODERATE_CURTAILMENT_MW,
     low_price_eur: float = DEFAULT_LOW_PRICE_EUR,
 ) -> str:
-    """Classify grid stress for one hourly record.
-
-    HIGH: curtailment >= high threshold, or negative MCP/SMP.
-    MODERATE: any curtailment, or price below the low-price band.
-    LOW: otherwise.
-    """
+    """HIGH on curtailment >= high threshold or negative price; MODERATE on
+    curtailment >= moderate threshold or price below the low band; else LOW."""
     ren = record.get("renewables", {})
     pricing = record.get("pricing", {})
     curt = _as_float(ren.get("estimatedCurtailmentMW")) or 0.0
@@ -247,7 +312,7 @@ def compute_grid_stress(
 
 
 def finalize(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Sort, compute the stress indicator and drop internal helper keys."""
+    """Merge, sort, compute the stress indicator and drop internal helper keys."""
     out = []
     for rec in merge_hourly_records(records):
         rec["gridStressIndicator"] = compute_grid_stress(rec)
