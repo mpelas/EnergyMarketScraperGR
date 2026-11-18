@@ -1,0 +1,53 @@
+{
+    "actorSpecification": 1,
+    "fields": {
+        "type": "object",
+        "properties": {
+            "timestamp": { "type": "string", "description": "Hour start, ISO-8601 UTC" },
+            "marketArea": { "type": "string", "description": "Bidding zone / market area code, e.g. GR" },
+            "resolution": { "type": "string", "description": "Time resolution, e.g. 1H" },
+            "load": { "type": "object" },
+            "renewables": { "type": "object" },
+            "pricing": { "type": "object" },
+            "crossBorderFlowsMW": { "type": "object" },
+            "gridStressIndicator": { "type": "string", "enum": ["LOW", "MODERATE", "HIGH"] },
+            "sources": { "type": "array", "items": { "type": "string" } },
+            "ingestedAt": { "type": "string" }
+        },
+        "required": ["timestamp", "marketArea", "gridStressIndicator"]
+    },
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": [
+                    "timestamp",
+                    "marketArea",
+                    "resolution",
+                    "gridStressIndicator",
+                    "load",
+                    "renewables",
+                    "pricing",
+                    "crossBorderFlowsMW",
+                    "sources",
+                    "ingestedAt"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "timestamp": { "label": "Timestamp (UTC)", "format": "text" },
+                    "marketArea": { "label": "Area", "format": "text" },
+                    "resolution": { "label": "Resolution", "format": "text" },
+                    "gridStressIndicator": { "label": "Grid stress", "format": "text" },
+                    "load": { "label": "Load (MW)", "format": "object" },
+                    "renewables": { "label": "Renewables (MW)", "format": "object" },
+                    "pricing": { "label": "Pricing (EUR/MWh)", "format": "object" },
+                    "crossBorderFlowsMW": { "label": "Cross-border flows (MW)", "format": "object" },
+                    "sources": { "label": "Sources", "format": "array" },
+                    "ingestedAt": { "label": "Ingested at", "format": "text" }
+                }
+            }
+        }
+    }
+}

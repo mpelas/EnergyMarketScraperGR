@@ -1,0 +1,88 @@
+{
+    "title": "Hellenic & Balkan Energy Market Tracker - Input",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "dateFrom": {
+            "title": "Start date (YYYY-MM-DD)",
+            "type": "string",
+            "editor": "textfield",
+            "description": "First day to fetch. Accepts YYYY-MM-DD, or the keywords 'today' / 'yesterday'. Defaults to yesterday.",
+            "prefill": "2026-11-17",
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}|today|yesterday)$"
+        },
+        "dateTo": {
+            "title": "End date (YYYY-MM-DD)",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Last day to fetch (inclusive). Defaults to dateFrom. Range is capped at 31 days.",
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}|today|yesterday)$"
+        },
+        "includeAdmieData": {
+            "title": "Fetch ADMIE (IPTO) grid files & forecasts",
+            "type": "boolean",
+            "default": true,
+            "description": "Queries the ADMIE Operation & Market Files API (getOperationMarketFilewRange) for load, RES generation/forecast and balancing files."
+        },
+        "admieCategories": {
+            "title": "ADMIE file categories",
+            "type": "array",
+            "editor": "json",
+            "description": "ADMIE FileCategory codes to request, e.g. RealTimeSCADASystemLoad, ISPDayAheadLoadForecast, ISPWeekAheadLoadForecast, DayAheadSystemMarginalPrice.",
+            "default": [
+                "RealTimeSCADASystemLoad",
+                "ISPDayAheadLoadForecast",
+                "ISPWeekAheadLoadForecast",
+                "DayAheadSystemMarginalPrice",
+                "DayAheadRESForecast"
+            ],
+            "items": {
+                "type": "string"
+            }
+        },
+        "includeHEnExPrices": {
+            "title": "Fetch HEnEx day-ahead market results",
+            "type": "boolean",
+            "default": true,
+            "description": "Downloads the YYYYMMDD_EL-DAM_Results_EN xlsx package from enexgroup.gr and extracts hourly market clearing prices (MCP) and volumes."
+        },
+        "includeEntsoeFlows": {
+            "title": "Fetch cross-border flows (ENTSO-E Transparency)",
+            "type": "boolean",
+            "default": false,
+            "description": "Queries the ENTSO-E Transparency Platform REST API for physical flows on the GR borders (IT, BG, MK, AL, TR). Requires a free ENTSO-E security token."
+        },
+        "entsoeApiKey": {
+            "title": "ENTSO-E security token (optional)",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Free API token from https://transparency.entsoe.eu/. Required only when includeEntsoeFlows is true."
+        },
+        "alertWebhookUrl": {
+            "title": "Alert webhook URL (optional)",
+            "type": "string",
+            "editor": "textfield",
+            "description": "HTTP endpoint (Slack/Discord/custom) that receives a JSON alert when a threshold is breached."
+        },
+        "alertThresholds": {
+            "title": "Alert thresholds",
+            "type": "object",
+            "editor": "json",
+            "description": "Trigger a webhook alert when curtailment MW exceeds maxCurtailmentMW, or MCP (EUR/MWh) falls below minMCPPrice (negative-price alert).",
+            "default": {
+                "maxCurtailmentMW": 300.0,
+                "minMCPPrice": 0.0
+            }
+        },
+        "proxyConfiguration": {
+            "title": "Proxy configuration",
+            "type": "object",
+            "description": "Optional proxy for source requests (some operator portals rate-limit datacenter IPs).",
+            "editor": "proxy",
+            "default": {
+                "useApifyProxy": false
+            }
+        }
+    },
+    "required": ["dateFrom"]
+}

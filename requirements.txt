@@ -1,0 +1,11 @@
+# Apify SDK (versions match the tested environment: apify 3.x)
+apify>=3.1,<4
+
+# HTTP + parsing
+httpx>=0.27
+beautifulsoup4>=4.12
+lxml>=5.2
+
+# HEnEx DAM results are published as .xlsx packages
+pandas>=2.2
+openpyxl>=3.1

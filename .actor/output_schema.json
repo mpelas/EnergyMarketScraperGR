@@ -1,0 +1,21 @@
+{
+    "actorOutputSchemaVersion": 1,
+    "title": "Energy Market Tracker output",
+    "properties": {
+        "dataset": {
+            "type": "string",
+            "title": "Hourly unified market dataset",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=overview"
+        },
+        "run_summary": {
+            "type": "string",
+            "title": "Run summary (key-value store)",
+            "template": "{{links.apiDefaultKeyValueStoreUrl}}/keys/run_summary"
+        },
+        "alerts": {
+            "type": "string",
+            "title": "Triggered alerts (key-value store)",
+            "template": "{{links.apiDefaultKeyValueStoreUrl}}/keys/alerts"
+        }
+    }
+}

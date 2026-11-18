@@ -1,0 +1,16 @@
+{
+    "actorKeyValueStoreSchemaVersion": 1,
+    "title": "Energy Market Tracker key-value store",
+    "collections": {
+        "summaries": {
+            "title": "Run summaries",
+            "description": "Per-run statistics stored under the key run_summary",
+            "key": "run_summary"
+        },
+        "alerts": {
+            "title": "Triggered alerts",
+            "description": "Threshold alerts raised during the run, stored under the key alerts",
+            "key": "alerts"
+        }
+    }
+}
